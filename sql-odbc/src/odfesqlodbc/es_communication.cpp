@@ -22,6 +22,8 @@
 #include "es_odbc.h"
 #include "mylog.h"
 #include "array"
+#include <atomic>
+#include <mutex>
 #include <aws/core/utils/StringUtils.h>
 #include <aws/core/client/RetryStrategy.h>
 #include <aws/core/client/AWSClient.h>
@@ -110,6 +112,40 @@ static const std::string ERROR_RESPONSE_SCHEMA = R"EOF(
     ]
 }
 )EOF";
+
+namespace {
+    /**
+     * A helper class to initialize/shutdown AWS API once per DLL load/unload.
+     */
+    class AwsSdkHelper {
+      public:
+        AwsSdkHelper() :
+          m_reference_count(0) {
+        }
+
+        AwsSdkHelper& operator++() {
+          if (1 == ++m_reference_count) {
+            std::scoped_lock lock(m_mutex);
+            Aws::InitAPI(m_sdk_options);
+          }
+          return *this;
+        }
+
+        AwsSdkHelper& operator--() {
+          if (0 == --m_reference_count) {
+            std::scoped_lock lock(m_mutex);
+            Aws::ShutdownAPI(m_sdk_options);
+          }
+          return *this;
+        }
+
+        Aws::SDKOptions m_sdk_options;
+        std::atomic<int> m_reference_count;
+        std::mutex m_mutex;
+    };
+
+    AwsSdkHelper AWS_SDK_HELPER;
+}
 
 void ESCommunication::AwsHttpResponseToString(
     std::shared_ptr< Aws::Http::HttpResponse > response, std::string& output) {
@@ -223,13 +259,11 @@ ESCommunication::ESCommunication()
 #pragma clang diagnostic pop
 #endif  // __APPLE__
 {
-    LogMsg(ES_ALL, "Initializing Aws API.");
-    Aws::InitAPI(m_options);
+    ++AWS_SDK_HELPER;
 }
 
 ESCommunication::~ESCommunication() {
-    LogMsg(ES_ALL, "Shutting down Aws API.");
-    Aws::ShutdownAPI(m_options);
+    --AWS_SDK_HELPER;
 }
 
 std::string ESCommunication::GetErrorMessage() {

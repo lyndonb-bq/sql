@@ -103,7 +103,6 @@ class ESCommunication {
     ESResultQueue m_result_queue;
     runtime_options m_rt_opts;
     std::string m_client_encoding;
-    Aws::SDKOptions m_options;
     std::string m_response_str;
     std::shared_ptr< Aws::Http::HttpClient > m_http_client;
 };
